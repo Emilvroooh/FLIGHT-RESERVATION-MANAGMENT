@@ -1,0 +1,7 @@
+package com.flightbooking.model;
+import java.math.BigDecimal; import java.time.LocalDateTime;
+public class BookingSummary {
+    private final long id; private final String status,customerName,email,flightNumber,departureCity,destinationCity,cancellationStatus; private final BigDecimal total; private final LocalDateTime bookedAt,departureTime;
+    public BookingSummary(long id,String status,String customerName,String email,String flightNumber,String departureCity,String destinationCity,BigDecimal total,LocalDateTime bookedAt,LocalDateTime departureTime,String cancellationStatus){this.id=id;this.status=status;this.customerName=customerName;this.email=email;this.flightNumber=flightNumber;this.departureCity=departureCity;this.destinationCity=destinationCity;this.total=total;this.bookedAt=bookedAt;this.departureTime=departureTime;this.cancellationStatus=cancellationStatus;}
+    public long getId(){return id;} public String getStatus(){return status;} public String getCustomerName(){return customerName;} public String getEmail(){return email;} public String getFlightNumber(){return flightNumber;} public String getDepartureCity(){return departureCity;} public String getDestinationCity(){return destinationCity;} public BigDecimal getTotal(){return total;} public LocalDateTime getBookedAt(){return bookedAt;} public LocalDateTime getDepartureTime(){return departureTime;} public String getCancellationStatus(){return cancellationStatus;}
+}
