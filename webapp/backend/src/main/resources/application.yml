@@ -1,0 +1,29 @@
+server:
+  port: 8080
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: none
+    open-in-view: false
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+  datasource:
+    url: ${FLIGHT_DB_URL:jdbc:mysql://localhost:3306/flight_booking_web?serverTimezone=UTC}
+    username: ${FLIGHT_DB_USER:flight_web_app}
+    password: ${FLIGHT_DB_PASSWORD:}
+  mail:
+    host: ${SMTP_HOST:}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls.enable: true
+app:
+  jwt-secret: ${JWT_SECRET}
+  jwt-expiration-minutes: 30
+  admin-passkey: ${ADMIN_PASSKEY:20080301}
+  frontend-url: ${FRONTEND_URL:http://localhost:5173}

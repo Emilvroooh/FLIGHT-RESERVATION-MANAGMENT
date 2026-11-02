@@ -7,6 +7,7 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.time.LocalDateTime;
 
 final class BoardingPassDialog extends JDialog {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("EEE, d MMM yyyy · HH:mm");
@@ -14,6 +15,7 @@ final class BoardingPassDialog extends JDialog {
     private final AppFrame frame;
     private final Account account;
     private final JComboBox<BoardingPass> passPicker;
+    private final JLabel journeyStatus = new JLabel();
 
     BoardingPassDialog(AppFrame frame, Account account, List<BoardingPass> passes) {
         super(frame, "Your Boarding Pass", Dialog.ModalityType.APPLICATION_MODAL);
@@ -44,6 +46,8 @@ final class BoardingPassDialog extends JDialog {
         passPicker.addActionListener(e -> showPass((BoardingPass) passPicker.getSelectedItem()));
         setContentPane(root); setMinimumSize(new Dimension(580, 530)); setSize(700, 640); setLocationRelativeTo(frame);
         if (!passes.isEmpty()) showPass(passes.get(0));
+        javax.swing.Timer statusTimer=new javax.swing.Timer(1000,e->updateJourneyStatus((BoardingPass)passPicker.getSelectedItem()));statusTimer.start();
+        addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowClosed(java.awt.event.WindowEvent e){statusTimer.stop();}@Override public void windowClosing(java.awt.event.WindowEvent e){statusTimer.stop();}});
     }
 
     private void requestBookingCancellation(){
@@ -63,6 +67,7 @@ final class BoardingPassDialog extends JDialog {
         JLabel logo = new JLabel("SKYWARD  ·  " + pass.getAirline()); logo.setFont(new Font("Segoe UI", Font.BOLD, 11)); logo.setForeground(new Color(209, 213, 219));
         JLabel destination = new JLabel("To " + pass.getDestinationCity()); destination.setFont(new Font("Segoe UI", Font.BOLD, 24)); destination.setForeground(Ui.WHITE);
         route.add(logo); route.add(Box.createVerticalStrut(7)); route.add(destination);
+        journeyStatus.setOpaque(true);journeyStatus.setBorder(new EmptyBorder(4,8,4,8));route.add(Box.createVerticalStrut(8));route.add(journeyStatus);updateJourneyStatus(pass);
         JLabel seat = new JLabel("<html><center>SEAT<br>" + pass.getSeatNumber() + "</center></html>", SwingConstants.CENTER);
         seat.setFont(new Font("Segoe UI", Font.BOLD, 18)); seat.setForeground(Ui.WHITE);
         seat.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(new Color(107, 114, 128)), new EmptyBorder(8, 14, 8, 14)));
@@ -72,7 +77,10 @@ final class BoardingPassDialog extends JDialog {
         details.add(detail("PASSENGER NAME", pass.getPassengerName()));
         details.add(detail("BOOKING REFERENCE", "SB-" + pass.getBookingId()));
         details.add(detail("AGE / GENDER", pass.getAge() + " / " + pass.getGender()));
-        details.add(detail("PASSPORT NUMBER", blankDash(pass.getPassportNumber())));
+        String verificationId = pass.getVerificationIdType() == null
+                ? blankDash(pass.getPassportNumber())
+                : blankDash(pass.getVerificationIdType()) + " · ending " + maskedSuffix(pass.getVerificationIdNumber());
+        details.add(detail("GOVERNMENT VERIFICATION ID", verificationId));
         details.add(detail("FLIGHT NUMBER", pass.getFlightNumber()));
         details.add(detail("TICKET NUMBER", pass.getTicketNumber()));
         details.add(detail("CABIN CLASS", "BUSINESS".equals(pass.getCabinClass()) ? "Business Class" : "Economy"));
@@ -85,6 +93,8 @@ final class BoardingPassDialog extends JDialog {
         card.revalidate(); card.repaint();
     }
 
+    private void updateJourneyStatus(BoardingPass pass){if(pass==null)return;String status=com.flightbooking.service.FlightSchedule.label(pass.getDepartureTime(),pass.getArrivalTime(),LocalDateTime.now());journeyStatus.setText(status);if("Successfully Landed".equals(status)){journeyStatus.setBackground(new Color(204,251,241));journeyStatus.setForeground(new Color(15,118,110));}else if("Already Departed".equals(status)){journeyStatus.setBackground(new Color(229,231,235));journeyStatus.setForeground(new Color(75,85,99));}else if("Closing Soon".equals(status)){journeyStatus.setBackground(new Color(254,226,226));journeyStatus.setForeground(new Color(185,28,28));}else{journeyStatus.setBackground(new Color(224,242,254));journeyStatus.setForeground(new Color(3,105,161));}journeyStatus.setFont(new Font("Segoe UI",Font.BOLD,11));}
+
     private JPanel detail(String label, String value) {
         JPanel field = new JPanel(); field.setOpaque(false); field.setLayout(new BoxLayout(field, BoxLayout.Y_AXIS));
         JLabel caption = Ui.muted(label); caption.setFont(new Font("Segoe UI", Font.BOLD, 10));
@@ -93,4 +103,5 @@ final class BoardingPassDialog extends JDialog {
     }
 
     private String blankDash(String value) { return value == null || value.isBlank() ? "—" : value; }
+    private String maskedSuffix(String value) { return value == null || value.length() < 4 ? "••••" : "•••• " + value.substring(value.length() - 4); }
 }

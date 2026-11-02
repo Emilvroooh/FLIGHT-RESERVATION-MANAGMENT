@@ -21,11 +21,16 @@ public class FlightDao {
     }
     /** Searches by route/date and optionally caps the Economy fare shown as the base ticket price. */
     public List<Flight> search(String from,String to,LocalDate date,BigDecimal maxEconomyPrice) throws SQLException {
+        updateStatuses();
         StringBuilder sql=new StringBuilder(SELECT+"WHERE f.departure_time>=NOW()");
         if(from!=null&&!from.isBlank())sql.append(" AND LOWER(f.departure_city) LIKE LOWER(?)");if(to!=null&&!to.isBlank())sql.append(" AND LOWER(f.destination_city) LIKE LOWER(?)");if(date!=null)sql.append(" AND f.departure_time>=? AND f.departure_time<?");if(maxEconomyPrice!=null)sql.append(" AND f.economy_ticket_price<=?");sql.append(" ORDER BY f.departure_time");
         try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement(sql.toString())){int i=1;if(from!=null&&!from.isBlank())p.setString(i++,"%"+from.trim()+"%");if(to!=null&&!to.isBlank())p.setString(i++,"%"+to.trim()+"%");if(date!=null){p.setTimestamp(i++,Timestamp.valueOf(date.atStartOfDay()));p.setTimestamp(i++,Timestamp.valueOf(date.plusDays(1).atStartOfDay()));}if(maxEconomyPrice!=null)p.setBigDecimal(i,maxEconomyPrice);List<Flight> results=flights(p);results.removeIf(f->f.getAvailableSeats()<=0);return results;}
     }
-    public List<Flight> listAll() throws SQLException {try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement(SELECT+"ORDER BY f.departure_time")){return flights(p);}}
+    public List<Flight> listAll() throws SQLException {updateStatuses();try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement(SELECT+"ORDER BY f.departure_time")){return flights(p);}}
+    public void updateStatuses() throws SQLException {
+        String expected="CASE WHEN arrival_time<=CURRENT_TIMESTAMP THEN 'LANDED' WHEN departure_time<=CURRENT_TIMESTAMP THEN 'DEPARTED' WHEN departure_time<=DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 30 MINUTE) THEN 'CLOSING_SOON' ELSE 'SCHEDULED' END";
+        try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement("UPDATE flights SET flight_status="+expected+" WHERE flight_status<>"+expected)){p.executeUpdate();}
+    }
     public List<Airline> airlines() throws SQLException {List<Airline> out=new ArrayList<>();try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement("SELECT airline_id,airline_name FROM airlines ORDER BY airline_name");ResultSet r=p.executeQuery()){while(r.next())out.add(new Airline(r.getLong(1),r.getString(2)));}return out;}
     public void save(long id,long airlineId,String number,String from,String to,LocalDateTime depart,LocalDateTime arrive,int economyCapacity,int businessCapacity,BigDecimal economyPrice,BigDecimal businessPrice) throws SQLException {
         if(economyCapacity<0||businessCapacity<0||economyCapacity+businessCapacity<=0)throw new IllegalArgumentException("Enter a positive cabin seat capacity.");

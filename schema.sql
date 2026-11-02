@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS flights (
     destination_city VARCHAR(120) NOT NULL,
     departure_time DATETIME NOT NULL,
     arrival_time DATETIME NOT NULL,
+    flight_status VARCHAR(20) NOT NULL DEFAULT 'SCHEDULED',
     available_seats INT UNSIGNED NOT NULL,
     ticket_price DECIMAL(10,2) NOT NULL,
     economy_capacity INT UNSIGNED NOT NULL,
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS flights (
         REFERENCES airlines (airline_id) ON UPDATE CASCADE ON DELETE RESTRICT,
     CONSTRAINT chk_flights_cities CHECK (departure_city <> destination_city),
     CONSTRAINT chk_flights_times CHECK (arrival_time > departure_time),
+    CONSTRAINT chk_flights_status CHECK (flight_status IN ('SCHEDULED','CLOSING_SOON','DEPARTED','LANDED')),
     CONSTRAINT chk_flights_price CHECK (ticket_price = economy_ticket_price AND economy_ticket_price >= 0 AND business_ticket_price >= economy_ticket_price * 2.5 AND business_ticket_price <= economy_ticket_price * 3.0),
     CONSTRAINT chk_flights_class_seats CHECK (available_seats = economy_available_seats + business_available_seats AND economy_available_seats <= economy_capacity AND business_available_seats <= business_capacity)
 ) ENGINE=InnoDB;
@@ -81,11 +83,14 @@ CREATE TABLE IF NOT EXISTS passengers (
     age TINYINT UNSIGNED NOT NULL,
     gender VARCHAR(24) NOT NULL,
     passport_no VARCHAR(32) NULL,
+    verification_id_type VARCHAR(20) NOT NULL,
+    verification_id_number VARCHAR(32) NOT NULL,
     PRIMARY KEY (passenger_id),
     KEY idx_passengers_booking (booking_id),
     CONSTRAINT fk_passengers_booking FOREIGN KEY (booking_id)
         REFERENCES bookings (booking_id) ON UPDATE CASCADE ON DELETE CASCADE,
-    CONSTRAINT chk_passengers_age CHECK (age <= 120)
+    CONSTRAINT chk_passengers_age CHECK (age <= 120),
+    CONSTRAINT chk_passengers_verification_type CHECK (verification_id_type IN ('PAN Card', 'Aadhaar Card', 'Passport'))
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS payments (

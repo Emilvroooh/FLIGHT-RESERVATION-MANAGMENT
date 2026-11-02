@@ -1,12 +1,15 @@
 package com.flightbooking.ui;
 
 import com.flightbooking.model.*;
+import com.flightbooking.service.VerificationIdValidator;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
 final class BookingDialog extends JDialog {
     private final List<PassengerRow> passengerRows = new ArrayList<>();
@@ -15,6 +18,8 @@ final class BookingDialog extends JDialog {
     private final AppFrame frame;
     private final Account account;
     private final Flight flight;
+    private final JButton reserveButton = Ui.button("Reserve seats", true);
+    private final JLabel cutoffLabel = Ui.muted("");
 
     BookingDialog(AppFrame frame, Account account, Flight flight) {
         super(frame, "Passenger details", true);
@@ -46,14 +51,21 @@ final class BookingDialog extends JDialog {
         center.add(form, BorderLayout.CENTER); center.add(routeSummary(), BorderLayout.SOUTH);
         root.add(center, BorderLayout.CENTER);
 
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); actions.setOpaque(false);
-        JButton cancel = Ui.button("Cancel", false), reserve = Ui.button("Reserve seats", true);
-        actions.add(cancel); actions.add(reserve); root.add(actions, BorderLayout.SOUTH);
+        JPanel actions = new JPanel(new BorderLayout()); actions.setOpaque(false);
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); buttons.setOpaque(false);
+        JButton cancel = Ui.button("Cancel", false); buttons.add(cancel); buttons.add(reserveButton);
+        actions.add(cutoffLabel, BorderLayout.WEST); actions.add(buttons, BorderLayout.EAST); root.add(actions, BorderLayout.SOUTH);
         cancel.addActionListener(e -> dispose());
-        reserve.addActionListener(e -> reserveBooking());
+        reserveButton.addActionListener(e -> reserveBooking());
         addPassengerRow();
         setContentPane(root);
+        javax.swing.Timer cutoffTimer = new javax.swing.Timer(1000, e -> refreshCutoffState());
+        cutoffTimer.start();
+        addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowClosed(java.awt.event.WindowEvent e){cutoffTimer.stop();}@Override public void windowClosing(java.awt.event.WindowEvent e){cutoffTimer.stop();}});
+        refreshCutoffState();
     }
+
+    private void refreshCutoffState(){boolean open=com.flightbooking.service.FlightSchedule.bookingOpen(flight,java.time.LocalDateTime.now());reserveButton.setEnabled(open);cutoffLabel.setText(open?"":"   "+com.flightbooking.service.FlightSchedule.message(flight,java.time.LocalDateTime.now()));}
 
     private void addPassengerRow() {
         if (passengerRows.size() >= 8) { Ui.info(this, "A booking can include up to 8 passengers."); return; }
@@ -75,6 +87,11 @@ final class BookingDialog extends JDialog {
 
     private void reserveBooking() {
         try {
+            if (!com.flightbooking.service.FlightSchedule.bookingOpen(flight, java.time.LocalDateTime.now())) {
+                Ui.info(this, com.flightbooking.service.FlightSchedule.message(flight, java.time.LocalDateTime.now()));
+                dispose();
+                return;
+            }
             List<PassengerInput> passengers = new ArrayList<>();
             for (PassengerRow row : passengerRows) passengers.add(row.toInput());
             passengers = frame.bookingService().validatePassengers(passengers);
@@ -86,7 +103,7 @@ final class BookingDialog extends JDialog {
             for (int i = 0; i < passengers.size(); i++) {
                 PassengerInput passenger = passengers.get(i);
                 String seat=selectedSeats.get(i);
-                seatedPassengers.add(new PassengerInput(passenger.getName(), passenger.getAge(), passenger.getGender(), passenger.getPassportNo(), seat, seatDialog.cabinClassForSeat(seat)));
+                seatedPassengers.add(new PassengerInput(passenger.getName(), passenger.getAge(), passenger.getGender(), passenger.getVerificationIdType(), passenger.getVerificationIdNumber(), seat, seatDialog.cabinClassForSeat(seat)));
             }
             long id = frame.bookingService().create(account.getId(), flight.getId(), seatedPassengers);
             dispose();
@@ -133,29 +150,86 @@ final class BookingDialog extends JDialog {
         final JTextField name = Ui.field(15);
         final JSpinner age = new JSpinner(new SpinnerNumberModel(18, 0, 120, 1));
         final JComboBox<String> gender = new JComboBox<>(new String[]{"Male", "Female", "Other"});
-        final JTextField passport = Ui.field(13);
+        final JComboBox<String> verificationType = new JComboBox<>(new String[]{
+                "Select ID type", VerificationIdValidator.PAN, VerificationIdValidator.AADHAAR, VerificationIdValidator.PASSPORT});
+        final JTextField verificationNumber = Ui.field(18);
+        final JLabel formatHint = Ui.muted("");
+        final JLabel validationMessage = new JLabel(" ");
         final JButton remove = Ui.button("Remove", false);
         final JPanel panel = new JPanel(new GridBagLayout());
+        private boolean verificationTouched;
 
         PassengerRow() {
             panel.setBackground(Ui.WHITE);
             panel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Ui.INPUT_BORDER), new EmptyBorder(12, 12, 12, 12)));
             age.setFont(Ui.BODY); age.setBorder(BorderFactory.createLineBorder(Ui.INPUT_BORDER));
             gender.setFont(Ui.BODY); gender.setBackground(Ui.WHITE);
-            GridBagConstraints c = new GridBagConstraints(); c.gridy = 0; c.fill = GridBagConstraints.HORIZONTAL; c.anchor = GridBagConstraints.WEST; c.weightx = 1; c.insets = new Insets(0, 0, 0, 8);
-            addField("Full Name", name, 0, c); addField("Age", age, 1, c); addField("Gender", gender, 2, c); addField("Passport Number", passport, 3, c);
-            c.gridx = 4; c.weightx = 0; c.insets = new Insets(20, 0, 0, 0); panel.add(remove, c);
+            verificationType.setFont(Ui.BODY); verificationType.setBackground(Ui.WHITE);
+            validationMessage.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            GridBagConstraints c = new GridBagConstraints(); c.fill = GridBagConstraints.HORIZONTAL; c.anchor = GridBagConstraints.WEST; c.insets = new Insets(0, 0, 8, 8);
+            addField("Full Name", name, 0, 0, 1.7, c);
+            addField("Age", age, 1, 0, .65, c);
+            addField("Gender", gender, 2, 0, 1, c);
+            c.gridx = 3; c.gridy = 0; c.weightx = 0; c.insets = new Insets(20, 0, 8, 0); panel.add(remove, c);
+            c.insets = new Insets(0, 0, 8, 8);
+            addField("Verification ID Type", verificationType, 0, 1, 1.2, c);
+            JPanel numberField = new JPanel(new BorderLayout(0, 3)); numberField.setOpaque(false);
+            numberField.add(verificationNumber, BorderLayout.CENTER); numberField.add(formatHint, BorderLayout.SOUTH);
+            GridBagConstraints numberConstraints = (GridBagConstraints)c.clone();
+            numberConstraints.gridx = 1; numberConstraints.gridy = 1; numberConstraints.gridwidth = 3;
+            numberConstraints.weightx = 2.5; numberConstraints.insets = new Insets(0, 0, 8, 0);
+            panel.add(Ui.formField("Verification ID Number", numberField), numberConstraints);
+            GridBagConstraints errorConstraints = (GridBagConstraints)c.clone();
+            errorConstraints.gridx = 0; errorConstraints.gridy = 2; errorConstraints.gridwidth = 4;
+            errorConstraints.weightx = 1; errorConstraints.insets = new Insets(-4, 0, 0, 0);
+            panel.add(validationMessage, errorConstraints);
+            verificationType.addActionListener(e -> updateVerificationHint());
+            verificationNumber.getDocument().addDocumentListener(new DocumentListener() {
+                public void insertUpdate(DocumentEvent e) { refreshValidationIfTouched(); }
+                public void removeUpdate(DocumentEvent e) { refreshValidationIfTouched(); }
+                public void changedUpdate(DocumentEvent e) { refreshValidationIfTouched(); }
+            });
+            verificationNumber.addFocusListener(new java.awt.event.FocusAdapter() {
+                @Override public void focusLost(java.awt.event.FocusEvent e) { verificationTouched = true; updateVerificationHint(); }
+            });
+            updateVerificationHint();
             remove.addActionListener(e -> removePassengerRow(this));
             panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, panel.getPreferredSize().height));
         }
 
-        private void addField(String label, JComponent field, int x, GridBagConstraints base) {
-            GridBagConstraints c = (GridBagConstraints) base.clone(); c.gridx = x; c.weightx = x == 0 ? 1.5 : 1;
+        private void addField(String label, JComponent field, int x, int y, double weight, GridBagConstraints base) {
+            GridBagConstraints c = (GridBagConstraints) base.clone(); c.gridx = x; c.gridy = y; c.gridwidth = 1; c.weightx = weight;
             panel.add(Ui.formField(label, field), c);
         }
 
+        private void refreshValidationIfTouched() { if (verificationTouched) updateVerificationHint(); }
+
+        private void updateVerificationHint() {
+            String type = (String) verificationType.getSelectedItem();
+            String hint = switch (type == null ? "" : type) {
+                case VerificationIdValidator.PAN -> "e.g., ABCDE1234F (10-digit alphanumeric)";
+                case VerificationIdValidator.AADHAAR -> "e.g., 123456789012 (12-digit number)";
+                case VerificationIdValidator.PASSPORT -> "e.g., 123456789 or A12345678 (9 characters)";
+                default -> "Choose an ID type to see its required format.";
+            };
+            formatHint.setText(hint);
+            verificationNumber.setToolTipText(hint);
+            if (!verificationTouched) return;
+            String number = VerificationIdValidator.normalize(verificationNumber.getText());
+            String error = number.isBlank() ? "Verification ID number is required."
+                    : VerificationIdValidator.isValid(type, number) ? " " : VerificationIdValidator.errorMessage(type);
+            validationMessage.setText(error);
+            validationMessage.setForeground(" ".equals(error) ? Ui.MUTED : new Color(185, 28, 28));
+            verificationNumber.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(" ".equals(error) ? Ui.INPUT_BORDER : new Color(220, 38, 38)),
+                    new EmptyBorder(9, 11, 9, 11)));
+        }
+
         PassengerInput toInput() {
-            return new PassengerInput(name.getText(), (Integer) age.getValue(), (String) gender.getSelectedItem(), passport.getText());
+            verificationTouched = true;
+            updateVerificationHint();
+            return new PassengerInput(name.getText(), (Integer) age.getValue(), (String) gender.getSelectedItem(),
+                    (String) verificationType.getSelectedItem(), verificationNumber.getText());
         }
     }
 }

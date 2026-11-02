@@ -11,20 +11,24 @@ import java.util.concurrent.ExecutionException;
 
 final class SeatSelectionDialog extends JDialog {
     private final int requestedCount;
+    private final Flight flight;
     private final Set<String> selectedSeats = new LinkedHashSet<>();
     private final Map<String,JToggleButton> seatButtons = new LinkedHashMap<>();
     private final JLabel selectionLabel = Ui.muted("");
+    private final JLabel cutoffLabel = Ui.muted("");
     private final JButton continueButton = Ui.button("Continue", true);
     private final Map<JToggleButton,Color> cabinColors = new IdentityHashMap<>();
     private final Set<String> occupiedSeats = new HashSet<>();
     private final int businessCapacity;
     private boolean refreshInProgress;
     private final javax.swing.Timer seatRefreshTimer;
+    private final javax.swing.Timer cutoffStatusTimer;
     private java.util.List<String> result;
 
     SeatSelectionDialog(AppFrame frame, Flight flight, int requestedCount) throws Exception {
         super(frame, "Choose your seats", true);
         this.requestedCount = requestedCount;
+        this.flight = flight;
         this.businessCapacity = flight.getBusinessCapacity();
         occupiedSeats.addAll(frame.bookingDao().occupiedSeats(flight.getId()));
         int rows = Math.max(12, Math.min(50, (flight.getEconomyCapacity() + flight.getBusinessCapacity() + 5) / 6));
@@ -85,7 +89,7 @@ final class SeatSelectionDialog extends JDialog {
         JPanel footer = new JPanel(new BorderLayout(12, 0)); footer.setOpaque(false);
         JPanel legend = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0)); legend.setOpaque(false);
         legend.add(legendItem(new Color(79,70,150), "Business · ₹"+flight.getBusinessPrice())); legend.add(legendItem(Ui.ACCENT, "Economy · ₹"+flight.getEconomyPrice())); legend.add(legendItem(new Color(229, 231, 235), "Occupied")); legend.add(legendItem(new Color(245, 158, 11), "Selected"));
-        JPanel selection = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0)); selection.setOpaque(false); selection.add(selectionLabel);
+        JPanel selection = new JPanel(); selection.setOpaque(false); selection.setLayout(new BoxLayout(selection,BoxLayout.Y_AXIS));selection.add(selectionLabel);selection.add(cutoffLabel);
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0)); controls.setOpaque(false);
         JButton cancel = Ui.button("Cancel", false); controls.add(cancel); controls.add(continueButton);
         JPanel bottom = new JPanel(new BorderLayout()); bottom.setOpaque(false); bottom.add(selection, BorderLayout.WEST); bottom.add(controls, BorderLayout.EAST);
@@ -96,8 +100,10 @@ final class SeatSelectionDialog extends JDialog {
         setContentPane(root); setMinimumSize(new Dimension(620, 520)); setSize(720, 650); setLocationRelativeTo(frame);
         seatRefreshTimer=new javax.swing.Timer(2500,e->refreshOccupiedSeats(frame,flight.getId()));
         seatRefreshTimer.setInitialDelay(2500);
-        addWindowListener(new WindowAdapter(){@Override public void windowClosed(WindowEvent e){seatRefreshTimer.stop();}@Override public void windowClosing(WindowEvent e){seatRefreshTimer.stop();}});
+        cutoffStatusTimer=new javax.swing.Timer(1000,e->updateState());
+        addWindowListener(new WindowAdapter(){@Override public void windowClosed(WindowEvent e){seatRefreshTimer.stop();cutoffStatusTimer.stop();}@Override public void windowClosing(WindowEvent e){seatRefreshTimer.stop();cutoffStatusTimer.stop();}});
         seatRefreshTimer.start();
+        cutoffStatusTimer.start();
     }
 
     java.util.List<String> getSelectedSeats() { return result; }
@@ -112,6 +118,7 @@ final class SeatSelectionDialog extends JDialog {
     }
 
     private void updateState() {
+        boolean bookingOpen=com.flightbooking.service.FlightSchedule.bookingOpen(flight,java.time.LocalDateTime.now());
         for (Map.Entry<String,JToggleButton> entry : seatButtons.entrySet()) {
             String seat=entry.getKey();JToggleButton button=entry.getValue();
             if(occupiedSeats.contains(seat)){
@@ -125,12 +132,13 @@ final class SeatSelectionDialog extends JDialog {
             button.setBackground(selected ? new Color(245, 158, 11) : cabinColor);
             button.setForeground(Ui.WHITE);
             button.setBorder(BorderFactory.createLineBorder(selected ? new Color(217, 119, 6) : cabinColor, selected ? 2 : 1));
-            button.setEnabled(selected || selectedSeats.size() < requestedCount);
+            button.setEnabled(bookingOpen && (selected || selectedSeats.size() < requestedCount));
             button.setToolTipText(seat+" · "+(isBusiness(seat)?"Business Class":"Economy")+(selected?" · Selected":" · Available"));
         }
         selectionLabel.setText("Selected " + selectedSeats.size() + " of " + requestedCount +
                 (selectedSeats.isEmpty() ? "" : " · " + String.join(", ", selectedSeats)));
-        continueButton.setEnabled(selectedSeats.size() == requestedCount);
+        continueButton.setEnabled(bookingOpen && selectedSeats.size() == requestedCount);
+        cutoffLabel.setText(bookingOpen?"":com.flightbooking.service.FlightSchedule.message(flight,java.time.LocalDateTime.now()));
     }
 
     /** Polls the database so seat maps already open in other app instances converge quickly. */

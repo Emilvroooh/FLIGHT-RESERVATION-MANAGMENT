@@ -16,12 +16,17 @@ public class BookingService {
             if(passenger==null)throw new IllegalArgumentException("Complete every passenger row.");
             String name=passenger.getName()==null?"":passenger.getName().trim();
             String gender=passenger.getGender()==null?"":passenger.getGender().trim();
-            String passport=passenger.getPassportNo()==null?"":passenger.getPassportNo().trim();
+            String idType=passenger.getVerificationIdType()==null?"":passenger.getVerificationIdType().trim();
+            String idNumber=VerificationIdValidator.normalize(passenger.getVerificationIdNumber());
             int age=passenger.getAge();
-            if(name.isBlank()||name.length()>120||age<0||age>120||!Set.of("Male","Female","Other").contains(gender)||passport.length()>32)
-                throw new IllegalArgumentException("Check each passenger's name, age (0–120), gender, and passport number (32 characters maximum).");
+            if(name.isBlank()||name.length()>120||age<0||age>120||!Set.of("Male","Female","Other").contains(gender))
+                throw new IllegalArgumentException("Check each passenger's name, age (0–120), and gender.");
+            if(!VerificationIdValidator.isValidType(idType))
+                throw new IllegalArgumentException(VerificationIdValidator.errorMessage(idType));
+            if(!VerificationIdValidator.isValid(idType,idNumber))
+                throw new IllegalArgumentException(VerificationIdValidator.errorMessage(idType));
             String cabin=passenger.getCabinClass()==null?null:passenger.getCabinClass().toUpperCase(Locale.ROOT);
-            list.add(new PassengerInput(name,age,gender,passport.isBlank()?null:passport,passenger.getSeatNumber(),cabin));
+            list.add(new PassengerInput(name,age,gender,idType,idNumber,passenger.getSeatNumber(),cabin));
         }
         if(list.isEmpty()||list.size()>8)throw new IllegalArgumentException("Enter between 1 and 8 passengers.");
         return list;

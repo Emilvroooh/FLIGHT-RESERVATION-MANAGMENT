@@ -13,13 +13,13 @@ import java.time.LocalDateTime;
 import java.util.*;
 
 public class BookingDao {
-    private static final String SUMMARY="SELECT b.booking_id,b.status,u.name,u.email,f.flight_number,f.departure_city,f.destination_city,b.total_amount,b.booking_date,f.departure_time,(SELECT cr.request_status FROM cancellation_requests cr WHERE cr.booking_id=b.booking_id ORDER BY cr.request_id DESC LIMIT 1) FROM bookings b JOIN users u ON u.user_id=b.user_id JOIN flights f ON f.flight_id=b.flight_id ";
+    private static final String SUMMARY="SELECT b.booking_id,b.status,u.name,u.email,f.flight_number,f.departure_city,f.destination_city,b.total_amount,b.booking_date,f.departure_time,(SELECT cr.request_status FROM cancellation_requests cr WHERE cr.booking_id=b.booking_id ORDER BY cr.request_id DESC LIMIT 1),f.arrival_time FROM bookings b JOIN users u ON u.user_id=b.user_id JOIN flights f ON f.flight_id=b.flight_id ";
     public long create(long userId,long flightId,List<PassengerInput> passengers) throws SQLException {
         try(Connection c=DatabaseConnection.getConnection()){
             c.setAutoCommit(false);
             try{
                 BigDecimal economyPrice,businessPrice;int economyCapacity,businessCapacity;
-                try(PreparedStatement p=c.prepareStatement("SELECT economy_ticket_price,business_ticket_price,economy_capacity,business_capacity,departure_time FROM flights WHERE flight_id=? FOR UPDATE")){p.setLong(1,flightId);try(ResultSet r=p.executeQuery()){if(!r.next())throw new SQLException("Flight was not found.");economyPrice=r.getBigDecimal(1);businessPrice=r.getBigDecimal(2);economyCapacity=r.getInt(3);businessCapacity=r.getInt(4);if(r.getTimestamp(5).toLocalDateTime().isBefore(java.time.LocalDateTime.now()))throw new SQLException("This flight has already departed.");}}
+                try(PreparedStatement p=c.prepareStatement("SELECT economy_ticket_price,business_ticket_price,economy_capacity,business_capacity,departure_time FROM flights WHERE flight_id=? FOR UPDATE")){p.setLong(1,flightId);try(ResultSet r=p.executeQuery()){if(!r.next())throw new SQLException("Flight was not found.");economyPrice=r.getBigDecimal(1);businessPrice=r.getBigDecimal(2);economyCapacity=r.getInt(3);businessCapacity=r.getInt(4);LocalDateTime now=LocalDateTime.now(),departure=r.getTimestamp(5).toLocalDateTime();if(!now.isBefore(departure))throw new SQLException("Flight Departed — booking is closed.");if(now.isAfter(departure.minusMinutes(30)))throw new SQLException("Booking Closed — this flight departs in less than 30 minutes.");}}
                 int[] occupiedByClass=activeCabinCounts(c,flightId);int economyAvailable=Math.max(0,economyCapacity-occupiedByClass[0]),businessAvailable=Math.max(0,businessCapacity-occupiedByClass[1]);
                 int requestedEconomy=0,requestedBusiness=0;
                 Set<String> requestedSeats=new HashSet<>();
@@ -30,7 +30,7 @@ public class BookingDao {
                 try(PreparedStatement p=c.prepareStatement("UPDATE flights SET economy_available_seats=?,business_available_seats=?,available_seats=? WHERE flight_id=?")){p.setInt(1,newEconomyAvailable);p.setInt(2,newBusinessAvailable);p.setInt(3,newEconomyAvailable+newBusinessAvailable);p.setLong(4,flightId);if(p.executeUpdate()!=1)throw new SQLException("Flight inventory could not be updated; please try again.");}
                 BigDecimal total=BigDecimal.ZERO;for(PassengerInput passenger:passengers)total=total.add("BUSINESS".equals(passenger.getCabinClass())?businessPrice:economyPrice);long bookingId;
                 try(PreparedStatement p=c.prepareStatement("INSERT INTO bookings(user_id,flight_id,status,total_amount) VALUES(?,?,'PENDING',?)",Statement.RETURN_GENERATED_KEYS)){p.setLong(1,userId);p.setLong(2,flightId);p.setBigDecimal(3,total);p.executeUpdate();try(ResultSet keys=p.getGeneratedKeys()){keys.next();bookingId=keys.getLong(1);}}
-                try(PreparedStatement p=c.prepareStatement("INSERT INTO passengers(booking_id,name,age,gender,passport_no) VALUES(?,?,?,?,?)")){for(PassengerInput passenger:passengers){p.setLong(1,bookingId);p.setString(2,passenger.getName());p.setInt(3,passenger.getAge());p.setString(4,passenger.getGender());p.setString(5,passenger.getPassportNo());p.addBatch();}p.executeBatch();}
+                try(PreparedStatement p=c.prepareStatement("INSERT INTO passengers(booking_id,name,age,gender,passport_no,verification_id_type,verification_id_number) VALUES(?,?,?,?,?,?,?)")){for(PassengerInput passenger:passengers){p.setLong(1,bookingId);p.setString(2,passenger.getName());p.setInt(3,passenger.getAge());p.setString(4,passenger.getGender());p.setString(5,passenger.getPassportNo());p.setString(6,passenger.getVerificationIdType());p.setString(7,passenger.getVerificationIdNumber());p.addBatch();}p.executeBatch();}
                 try(PreparedStatement p=c.prepareStatement("INSERT INTO payments(booking_id,amount,payment_method,payment_status) VALUES(?,?,'CARD','PENDING')")){p.setLong(1,bookingId);p.setBigDecimal(2,total);p.executeUpdate();}
                 try(PreparedStatement p=c.prepareStatement("SELECT passenger_id,name FROM passengers WHERE booking_id=? ORDER BY passenger_id")){p.setLong(1,bookingId);try(ResultSet r=p.executeQuery()){int i=0;while(r.next()){PassengerInput passenger=passengers.get(i++);String ticket="TKT-"+UUID.randomUUID().toString().substring(0,12).toUpperCase(Locale.ROOT);BigDecimal fare="BUSINESS".equals(passenger.getCabinClass())?businessPrice:economyPrice;try(PreparedStatement insert=c.prepareStatement("INSERT INTO tickets(ticket_number,booking_id,flight_id,passenger_id,seat_number,cabin_class,ticket_price,ticket_status) VALUES(?,?,?,?,?,?,?,'ISSUED')")){insert.setString(1,ticket);insert.setLong(2,bookingId);insert.setLong(3,flightId);insert.setLong(4,r.getLong(1));insert.setString(5,passenger.getSeatNumber());insert.setString(6,passenger.getCabinClass());insert.setBigDecimal(7,fare);insert.executeUpdate();}}}}
                 c.commit();return bookingId;
@@ -38,6 +38,12 @@ public class BookingDao {
         }
     }
     public List<BookingSummary> forUser(long userId) throws SQLException {return summaries(SUMMARY+"WHERE b.user_id=? ORDER BY b.booking_date DESC",userId);}
+    public List<com.flightbooking.model.PassengerManifestEntry> passengerManifest(long flightId) throws SQLException {
+        String sql="SELECT b.booking_id,p.name,p.age,p.gender,p.verification_id_type,p.verification_id_number,t.seat_number,t.cabin_class FROM bookings b JOIN passengers p ON p.booking_id=b.booking_id JOIN tickets t ON t.booking_id=b.booking_id AND t.passenger_id=p.passenger_id WHERE b.flight_id=? AND b.status IN ('PENDING','CONFIRMED') AND t.ticket_status='ISSUED' ORDER BY t.cabin_class,t.seat_number,p.name";
+        List<com.flightbooking.model.PassengerManifestEntry> rows=new ArrayList<>();
+        try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setLong(1,flightId);try(ResultSet r=p.executeQuery()){while(r.next())rows.add(new com.flightbooking.model.PassengerManifestEntry(r.getLong(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5),r.getString(6),r.getString(7),r.getString(8)));}}
+        return rows;
+    }
     public List<BookingSummary> all() throws SQLException {return summaries(SUMMARY+"ORDER BY b.booking_date DESC");}
     public void deleteBookingForAdmin(long bookingId) throws SQLException {
         try(Connection c=DatabaseConnection.getConnection()){
@@ -68,10 +74,10 @@ public class BookingDao {
         return out;
     }
     public List<BoardingPass> boardingPassesForUser(long userId) throws SQLException {
-        String sql="SELECT t.ticket_number,p.name,p.age,p.gender,p.passport_no,f.flight_number,a.airline_name,f.destination_city,f.departure_time,f.arrival_time,t.seat_number,t.cabin_class,t.ticket_price,b.booking_id FROM tickets t JOIN bookings b ON b.booking_id=t.booking_id JOIN passengers p ON p.passenger_id=t.passenger_id JOIN flights f ON f.flight_id=t.flight_id JOIN airlines a ON a.airline_id=f.airline_id WHERE b.user_id=? AND b.status='CONFIRMED' AND t.ticket_status='ISSUED' ORDER BY f.departure_time,t.seat_number";
+        String sql="SELECT t.ticket_number,p.name,p.age,p.gender,p.passport_no,p.verification_id_type,p.verification_id_number,f.flight_number,a.airline_name,f.destination_city,f.departure_time,f.arrival_time,t.seat_number,t.cabin_class,t.ticket_price,b.booking_id FROM tickets t JOIN bookings b ON b.booking_id=t.booking_id JOIN passengers p ON p.passenger_id=t.passenger_id JOIN flights f ON f.flight_id=t.flight_id JOIN airlines a ON a.airline_id=f.airline_id WHERE b.user_id=? AND b.status='CONFIRMED' AND t.ticket_status='ISSUED' ORDER BY f.departure_time,t.seat_number";
         List<BoardingPass> out=new ArrayList<>();
         try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement(sql)){
-            p.setLong(1,userId);try(ResultSet r=p.executeQuery()){while(r.next())out.add(new BoardingPass(r.getString(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5),r.getString(6),r.getString(7),r.getString(8),r.getTimestamp(9).toLocalDateTime(),r.getTimestamp(10).toLocalDateTime(),r.getString(11),r.getString(12),r.getBigDecimal(13),r.getLong(14)));}
+            p.setLong(1,userId);try(ResultSet r=p.executeQuery()){while(r.next())out.add(new BoardingPass(r.getString(1),r.getString(2),r.getInt(3),r.getString(4),r.getString(5),r.getString(6),r.getString(7),r.getString(8),r.getString(9),r.getString(10),r.getTimestamp(11).toLocalDateTime(),r.getTimestamp(12).toLocalDateTime(),r.getString(13),r.getString(14),r.getBigDecimal(15),r.getLong(16)));}
         }
         return out;
     }
@@ -187,5 +193,5 @@ public class BookingDao {
         return new int[]{economy,business};
     }
     private int seatOrdinal(String seat){try{int row=Integer.parseInt(seat.substring(0,seat.length()-1)),col=seat.charAt(seat.length()-1)-'A';if(row<1||col<0||col>5)return -1;return (row-1)*6+col+1;}catch(RuntimeException ex){return -1;}}
-    private List<BookingSummary> summaries(String sql,long... params) throws SQLException {List<BookingSummary> out=new ArrayList<>();try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement(sql)){for(int i=0;i<params.length;i++)p.setLong(i+1,params[i]);try(ResultSet r=p.executeQuery()){while(r.next())out.add(new BookingSummary(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5),r.getString(6),r.getString(7),r.getBigDecimal(8),r.getTimestamp(9).toLocalDateTime(),r.getTimestamp(10).toLocalDateTime(),r.getString(11)));}}return out;}
+    private List<BookingSummary> summaries(String sql,long... params) throws SQLException {List<BookingSummary> out=new ArrayList<>();try(Connection c=DatabaseConnection.getConnection();PreparedStatement p=c.prepareStatement(sql)){for(int i=0;i<params.length;i++)p.setLong(i+1,params[i]);try(ResultSet r=p.executeQuery()){while(r.next())out.add(new BookingSummary(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5),r.getString(6),r.getString(7),r.getBigDecimal(8),r.getTimestamp(9).toLocalDateTime(),r.getTimestamp(10).toLocalDateTime(),r.getString(11),r.getTimestamp(12).toLocalDateTime()));}}return out;}
 }
